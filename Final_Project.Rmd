@@ -1,0 +1,140 @@
+---
+title: 'JHU - Coursera: Practical Machine Learning - Peer Graded Assessment'
+output:
+  html_document: default
+  html_notebook: default
+---
+### Summary
+The goal of this project was to predict whether exercises were performed correctly using fitness device telemetry. This is the "classe" variable in the training set. Two models were built: a decision tree and a random forest. PCA was used to normalize and reduce the dimensionality of the data set. Random sampling was used to create a 70%-30% testing and training split to ensure model generalizability.
+* Expected out of sample error? Training data yielded 100% accuracy. 
+
+Results: Testing set yielded 97%. At 95% confidence interval, I'd expect out-of-sample accuracy to be between 0.9727 and 0.9806.
+
+### Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+### Data
+The training data for this project are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+The test data are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+### Data Attributes
+```{r}
+weightlift <- read.csv("pml-training.csv")
+validation <- read.csv("pml-testing.csv")
+```
+The training data set has 19,622 obervations consisting of 160 variables. Validation set set has 20 observations of 160 variables. 
+
+The target variable is "classe". Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+Read more: http://groupware.les.inf.puc-rio.br/har#literature#ixzz4iBquSY7t
+
+```{r}
+summary(weightlift$classe)
+```
+### Preprocess and Split Data
+We begin with a 70/30 split of the training set to produce a training and testing set. We the verify that the relative proportion of each class is the same between data sets. 
+```{r}
+library(caret)
+
+set.seed(90210)
+df <- weightlift
+prepData <- function(df){
+  ## remove unwanted columns
+  df <- df[,!names(df) %in% c(
+    "user_name", 
+    "cvtd_timestapmp", 
+    "new_window", 
+    "raw_timestamp_part_1", 
+    "raw_timestamp_part_2", 
+    "cvtd_timestamp", "X", "num_window")]
+  
+  ## convert factors (except target variable) to characters
+  isFactor <- sapply(df, is.factor)
+  df[isFactor] <- lapply(df[isFactor], as.character)
+  
+  ## replace DIV/0 errors
+  df[df=="#DIV/0!"] <- "0"
+  
+  ## convert classe to factor
+  df$classe <- as.factor(df$classe)
+  
+  ## convert everything to numeric, except classe variable
+  isChar <- sapply(df, is.character)
+  df[isChar] <- lapply(df[isChar], as.numeric)
+  
+  ## remove columns with NAs in them
+  df <- df[,colSums(is.na(df)) == 0]
+  
+  df
+}
+
+## Clean up the data
+weightliftclean <- prepData(weightlift)
+validationclean <- validation[,names(validation) %in% names(weightliftclean)]
+
+## Split into Train and Test Sets
+inTrain <- createDataPartition(y = weightlift$classe, p=0.7, list=FALSE)
+training <- weightliftclean[inTrain,]
+testing <- weightliftclean[-inTrain,]
+
+## verify the proportions are similar
+table(training$classe)/nrow(training)
+table(testing$classe)/nrow(testing)
+
+```
+
+#### Pre-Processing and PCA
+To reduce the number of variables further, we use PCA. On the training set, we are able to presereve 95% of the variation with 25 components.
+```{r}
+transform <- preProcess(training[,-53], method = "pca", thresh=.95)
+transformTrain <- predict(transform, training[,-53])
+transformTrain <- cbind(classe=training[,53], transformTrain)
+head(transformTrain)
+
+transformTest <- predict(transform, newdata = testing[-53])
+transformTest <- cbind(classe=testing[,53], transformTest)
+```
+
+#### Decision Tree (CART w/ rpart)
+With the data processing complete, we fit a simple decision tree model. This model does achieves only a 37% prediction accuracy rate, which is about twice as good as random guessing (~20%), but not impressive. 
+```{r}
+dtModel <- train(classe ~., data = transformTrain, method="rpart")
+
+dtTestPre <- predict(dtModel, newdata = transformTest)
+dtTestCM <- confusionMatrix(dtTestPre, testing$classe)
+
+dtTestCM
+```
+#### Random Forest Model
+Next we try fitting a random forest model to the data. The model achieves 100% on the training data, which raised concerns that the the model may have been overfit. But, running on the test set yields 97% accuracy, suggesting the model may actually generalize well. 
+
+```{r}
+rfModel <- train(classe ~., data = transformTrain, method="rf")
+
+rfTrainPre <- predict(rfModel)
+rfTrainCM <- confusionMatrix(rfTrainPre, training$classe)
+
+rfTestPre <- predict(rfModel, newdata = transformTest)
+rfTestCM <- confusionMatrix(rfTestPre, testing$classe)
+
+rfTrainCM
+rfTestCM
+```
+
+### Validation Predictions
+Taking the random forest model, we now predict the classes for the validation set. 
+```{r}
+transformValidation <- predict(transform, newdata = validationclean)
+validationPred <- predict(rfModel, transformValidation)
+validationPredictions <- data.frame(id=cbind(validation$X, prediction=levels(validationPred)))
+print(validationPredictions)
+```
+
+### Session Info
+```{r}
+sessionInfo()
+```
+
